@@ -1,0 +1,9 @@
+[default]
+; general configuration: default endpoint
+endpoint=exemple-eu
+
+[exemple-eu]
+; configuration specific to 'exemple-eu' endpoint
+application_key=xxxxxxx
+application_secret=xxxxxxxxxx
+consumer_key=xxxxxxxxxxxxxxxxxx
