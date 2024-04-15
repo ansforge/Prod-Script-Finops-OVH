@@ -61,8 +61,5 @@ Les éléments suivants seront à créer et adapter en fonction du projet :
 
 -	CMDB.xlsx : le fichier Excel qui comporte des feuilles nécessaires pour le mapping des machines virtuelles (VM) et les ratios de facturation associés à chaque tenant. Les feuilles sont les suivantes : Liste utilisateurs, Appli-Tenant, Mapping VM, Applications, Domaine-Entreprise, Localisation.
 
--	instances_rules.csv : le fichier CSV contient les règles de mapping des machines virtuelles (VM) du cloud public ;
-
 -	Conf_token : le sous dossier qui contient les fichiers textes avec les différents tokens de l’API OVH associés à chaque application (SI) ;
   
--	CSV_output : le sous-dossier qui contiendra les différents fichiers CSV produits par l’extraction.
