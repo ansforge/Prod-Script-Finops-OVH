@@ -26,11 +26,9 @@ from importlib import reload
 import Calcul_inducteurs
 import Info_users
 
-sharepoint_client_id='xxxxxxxxxxxxxx'
-sharepoint_client_secret='xxxxxxxxxxxxxxxxxx'
-sharepoint_site_url = 'xxxxxxxxxxxxxxxxx'
-sharepoint_relative_url = "xxxxxxxxxxxxxxxxxxxxxxxxxx"
-# sharepoint_relative_url = "xxxxxxxxxxxxxxxxxxxxx"
+from Parameters import *
+
+alerts=set()
 
 tz="Europe/Paris"
 datetime_format="YYYY-MM-DD-HH-mm-ss"
