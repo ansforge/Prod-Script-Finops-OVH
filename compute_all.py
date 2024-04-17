@@ -675,19 +675,19 @@ def get_next_hour():
 	return(tt15)
 
 def send_email(tt,s):
-	# Voici l’email destinataire des mails d’alerte : ld-eao@esante.gouv.fr
+	# Voici l’email destinataire des mails d’alerte : Exemple@exemple.com
 	subject="rapport d'extraction "+str(tt)
 	text="python email: "+str(tt)+'\n'
 	for t in unknown_tenant_ratio:
 		text+="Le tenant "+str(t)+" n'est pas associé à des ratios dans la CMDB"+'\n'
 	text+=s
 	message = 'Subject: {}\n\n{}'.format(subject,text)
-	mailserver = smtplib.SMTP('xxxxxxxxx',587)
+	mailserver = smtplib.SMTP('SMTP_server_ip',SMTP_server_port)
 	mailserver.ehlo()
 	mailserver.starttls()
-	mailserver.login('xxxxxxxxxxx', 'xxxx')
+	mailserver.login('email_client_id', 'email_client_secret')
 	#Adding a newline before the body text fixes the missing message body
-	mailserver.sendmail('xxxxxxxxxxx','xxxxxxxxxxxxx',message.encode('xxxxx'))
+	mailserver.sendmail('email_client_id','adress',message.encode('cpxxx'))
 	mailserver.quit()
 
 # try:
