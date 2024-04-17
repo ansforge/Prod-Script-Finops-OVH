@@ -1,0 +1,8 @@
+sharepoint_client_id='***********'
+sharepoint_client_secret=='***********'
+sharepoint_site_url = ='***********'
+sharepoint_relative_url = ='***********'
+email_client_id=='***********'
+email_client_secret=='***********'
+SMTP_server_ip=='***********'
+SMTP_server_port=='***********'
