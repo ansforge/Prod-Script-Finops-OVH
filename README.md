@@ -62,4 +62,6 @@ Les éléments suivants seront à créer et adapter en fonction du projet :
 -	CMDB.xlsx : le fichier Excel qui comporte des feuilles nécessaires pour le mapping des machines virtuelles (VM) et les ratios de facturation associés à chaque tenant. Les feuilles sont les suivantes : Liste utilisateurs, Appli-Tenant, Mapping VM, Applications, Domaine-Entreprise, Localisation.
 
 -	Conf_token : le sous dossier qui contient les fichiers textes avec les différents tokens de l’API OVH associés à chaque application (SI) ;
+
+-	Parameters.py : un fichier de configuration pour l'authentification au SharePoint qui contient les secrets.
   
