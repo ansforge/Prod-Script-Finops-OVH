@@ -5,6 +5,7 @@ import csv
 import sys, os
 from os import listdir
 import configparser
+import traceback
 
 #Lecture du fichier de configuration
 config = configparser.ConfigParser()
@@ -19,7 +20,7 @@ activity=datetime.timedelta(days=int(config['durations']['days_activity']))
 
 
 #Récupération de la liste des utilisateurs
-def fetch_users(ovh_account, client):
+def fetch_users(ovh_account, client,logging):
     users_list=client.get('/me/identity/user')
 
     #Ajout du compte root à la liste des utilisateurs
@@ -27,7 +28,7 @@ def fetch_users(ovh_account, client):
     return users_list
 
 #Récupération des info de connexion : nom, MFA, date de dernière co
-def fetch_log_info(ovh_account, user_list, audit):
+def fetch_log_info(ovh_account, user_list, audit,logging):
     user_log_list=[]
     for log in audit :
         if log['type']=='LOGIN_SUCCESS':
@@ -51,11 +52,11 @@ def fetch_log_info(ovh_account, user_list, audit):
                 if checked == False:
                     user_log_list.append(user)
         else:
-            print("log['type']",log['type'],"not considered")
+            logging.info(["log['type']",log['type'],"not considered"])
     return user_log_list
 
 #Récupération de la liste des utilisateurs en période de sursis MFA
-def fetch_sursis(ovh_account, users_list, user_log_list, client):
+def fetch_sursis(ovh_account, users_list, user_log_list, client,logging):
     #Définition du délais de sursis accepté pour que l'utilisateur se mette en conformité MFA
     duree_sursis=sursis
     for user in user_log_list :
@@ -74,7 +75,7 @@ def fetch_sursis(ovh_account, users_list, user_log_list, client):
                 else:
                     user['sursis']=False
             except:
-                print(user)
+                logging.info([user])
         #Si l'utilisateur existe toujours mais qu'il s'agit soit d'un compte racine, soit d'un compte dont le MFA est activé
         #Il n'y a alors plus de sursis
         elif user['name'] in users_list :
@@ -82,7 +83,7 @@ def fetch_sursis(ovh_account, users_list, user_log_list, client):
     return user_log_list
 
 #Récupération de la liste des utilisateurs inactif
-def is_user_active(audit, user_log_list):
+def is_user_active(audit, user_log_list,logging):
     duree_inactif=activity #Définintion de la durée depuis la dernière connexion pour être considéré inactif
     for user in audit:
         if user['type']=='LOGIN_SUCCESS':
@@ -92,8 +93,6 @@ def is_user_active(audit, user_log_list):
             since_last_log=datetime.datetime.now()-last_log
             #Vérification de la condition d'inactivité
             for us in user_log_list:
-                # print("1---",us['name'])
-                # print("2---",user)
                 if us['name'] == user['authDetails']['userDetails']['user'] :
                     if since_last_log>duree_inactif:
                         us['actif']=False
@@ -103,7 +102,7 @@ def is_user_active(audit, user_log_list):
 
 #Ajoute les utilisateurs présents sur le compte mais non présents dans les logs (logs glissants sur un mois)
 #Vérifie également si le fichier d'historique contient l'état des users non présents dans les derniers logs
-def differentiel(user_list, user_log_list, previous_logs):
+def differentiel(user_list, user_log_list, previous_logs,logging):
     for user in user_list:
         check = False
         for uslog in user_log_list :
@@ -126,7 +125,7 @@ def differentiel(user_list, user_log_list, previous_logs):
     return user_log_list
 
 #Récupération de l'adresse mail liée au compte utilisateur
-def fetch_email(ovh_account, client, user_list_full):
+def fetch_email(ovh_account, client, user_list_full,logging):
     for user in user_list_full:
         if user['name']!=ovh_account:
             user['mail']=client.get('/me/identity/user/'+user['name'])['email']
@@ -135,7 +134,7 @@ def fetch_email(ovh_account, client, user_list_full):
     return user_list_full
 
 #Lecture des logs de connexion existants
-def previous_logs_read(ovh_account):
+def previous_logs_read(ovh_account,logging):
     csv_path=csv_logs+'/'+ovh_account+'.csv'
     previous_logs=[]
     #On vérifie que le fichier existe avant de le lire
@@ -152,7 +151,7 @@ def previous_logs_read(ovh_account):
     return previous_logs
 
 #Mise à jour des informations de logs des utilisateurs
-def update_previous_logs(ovh_account,previous_logs, user_list_full):
+def update_previous_logs(ovh_account,previous_logs, user_list_full,logging):
     for user in user_list_full:
         already_in_log=False
         for log in previous_logs:
@@ -162,7 +161,7 @@ def update_previous_logs(ovh_account,previous_logs, user_list_full):
         if already_in_log==False:
             previous_logs.append(user)
     csv_path=csv_logs+'/'+ovh_account+'.csv'
-    with open(csv_path, mode='w',encoding="cpxxxx",errors='replace') as log_file:
+    with open(csv_path, mode='w',encoding="cp1252",errors='replace') as log_file:
         data_writer=csv.writer(log_file, delimiter=',')
         data_writer.writerow(['name', 'mfa', 'sursis', 'actif', 'last_log', 'mail'])
         for log in previous_logs:
@@ -171,38 +170,41 @@ def update_previous_logs(ovh_account,previous_logs, user_list_full):
             data_writer.writerow([log['name'], log['mfa'], log['sursis'], log['actif'], log['last_log'], log['mail']])
 
 #Ecriture des informations récupérées dans un fichier csv
-def csv_write(ovh_account, user_list_full):
-    with open(csv_output, mode='a',encoding="cpxxxx",errors='replace') as data_file:
+def csv_write(ovh_account, user_list_full,logging):
+    with open(csv_output, mode='a',encoding="cp1252",errors='replace') as data_file:
         data_writer=csv.writer(data_file, delimiter=',')
         for user in user_list_full:
             for attribute in ['name', 'mfa', 'sursis', 'actif', 'last_log', 'mail']: 
                 if attribute not in user:user[attribute]='unknown'
             data_writer.writerow([ovh_account, user['name'], user['mfa'], user['sursis'], user['actif'], user['last_log'], user['mail']])    
 
-def compute():
+def compute(clients,logging,client_to_file):
     #Suppression de l'ancien contenu du fichier CSV et écriture des titres de colonnes
-    with open(csv_output, mode='w',encoding="cpxxxx",errors='replace') as data_file:
+    with open(csv_output, mode='w',encoding="cp1252",errors='replace') as data_file:
         data_writer=csv.writer(data_file, delimiter=',')
         data_writer.writerow(['Compte OVH', 'Utilisateur', 'Type MFA', 'Sursis MFA', 'Actif', 'Last log', 'Email'])
 
     #Connexion à l'API OVH pour chaque compte dont on possède le token
-    for file in listdir('Conf_token'):
-        print("Token : "+file)
-        client = ovh.Client(config_file=config['API_Token']['Folder_path']+str(file))
-        #Récupération de l'ID du compte ovh
-        ovh_account=client.get('/me')['nichandle']
-        #Récupération de la liste des utilisateurs du compte
-        users_list=fetch_users(ovh_account, client)
-        #Récupération des logs
-        audit = client.get('/me/logs/audit')
-        #Récupération des derniers états enregistrés pour les utilisateurs
-        previous_logs = previous_logs_read(ovh_account)
-        #Analyse des logs récupérés
-        user_log_list=fetch_log_info(ovh_account, users_list, audit)
-        user_log_list=fetch_sursis(ovh_account, users_list, user_log_list, client)
-        user_log_list=is_user_active(audit, user_log_list)
-        user_list_full=differentiel(users_list, user_log_list, previous_logs)
-        user_list_full=fetch_email(ovh_account, client, user_list_full)
-        update_previous_logs(ovh_account,previous_logs, user_list_full)
-        csv_write(ovh_account, user_list_full)
-    print('\rFichier mis à jour avec succès                             ')
+    for client in clients:
+        file=client_to_file[client]
+        try:
+            #Récupération de l'ID du compte ovh
+            ovh_account=client.get('/me')['nichandle']
+            #Récupération de la liste des utilisateurs du compte
+            users_list=fetch_users(ovh_account, client,logging)
+            #Récupération des logs
+            audit=client.get('/me/logs/audit')
+            #Récupération des derniers états enregistrés pour les utilisateurs
+            previous_logs=previous_logs_read(ovh_account,logging)
+            #Analyse des logs récupérés
+            user_log_list=fetch_log_info(ovh_account, users_list, audit,logging)
+            user_log_list=fetch_sursis(ovh_account, users_list, user_log_list, client,logging)
+            user_log_list=is_user_active(audit, user_log_list,logging)
+            user_list_full=differentiel(users_list, user_log_list, previous_logs,logging)
+            user_list_full=fetch_email(ovh_account, client, user_list_full,logging)
+            update_previous_logs(ovh_account,previous_logs, user_list_full,logging)
+            csv_write(ovh_account, user_list_full,logging)
+        except:
+            logging.info([file,"n'a pas accès au point final ","/me"])
+            s=traceback.format_exc()
+            logging.info(["raise",s])
