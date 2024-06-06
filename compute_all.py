@@ -22,16 +22,22 @@ import smtplib
 import traceback
 import logging
 from importlib import reload
+from pathlib import Path
+from fuzzywuzzy.process import dedupe
+from fuzzywuzzy import fuzz
 
 import Calcul_inducteurs
 import Info_users
-
 from Parameters import *
 
+debug=False
 alerts=set()
-
+client_to_file={}
 tz="Europe/Paris"
 datetime_format="YYYY-MM-DD-HH-mm-ss"
+day_of_week="dddd"
+def ts_to_day_of_week(ts):
+	return arrow.get(ts).to(tz).format(day_of_week)
 def ts_to_local_time_str(ts):
 	return arrow.get(ts).to(tz).format(datetime_format)
 def local_time_str_to_ts(str_date):
@@ -89,6 +95,9 @@ header9=['Nom du service','Datacenter Id','Nom de la VM','Consommation moyenne d
 csv_output10=config['csv_output']['Info_date']
 header10=['Date Time']
 
+csv_output11=config['csv_output']['Token_credential']
+header11=['File','date_debut','date_fin']
+
 def id_generator(size=16,chars=string.ascii_uppercase+string.digits):
 	return ''.join(random.choice(chars) for _ in range(size))
 
@@ -101,7 +110,7 @@ def redressement(price,t):
 
 #Fonction d'écriture des données dans un fichier csv
 def csv_write(csv_file,header,liste):
-	logging.info(["--->",csv_file])
+	logging.info(["Écriture du fichier",csv_file])
 	file=open(csv_file[:-4]+'.csv','w',encoding="cp1252",errors='replace')
 	data_writer=csv.writer(file,delimiter=',')
 	data_writer.writerow(header)
@@ -220,6 +229,7 @@ def fetch_history_snapshot(tenant_dict):
 			tenant_history = client.get('/cloud/project/'+str(t)+'/usage/history')
 			for history_entry in tenant_history :
 				#On regarde le détail pour chaque entrée
+				# print(str(t),history_entry)
 				history_details=client.get('/cloud/project/'+str(t)+'/usage/history/'+str(history_entry['id']))
 				period=history_details['period']['to'][:10]
 				for snapshot in history_details['hourlyUsage']['snapshot']:
@@ -262,9 +272,15 @@ def fetch_public_cloud_instance_info(tenant_dict):
 				name=inst_details['name']
 				ipv4=''
 				ipv6=''
-				if inst_details['ipAddresses'] :
-					ipv4=inst_details['ipAddresses'][0]['ip']
-					ipv6=inst_details['ipAddresses'][1]['ip']
+				if inst_details['ipAddresses']:
+					try:
+						ipv4=inst_details['ipAddresses'][0]['ip']
+					except:ipv4=''
+					try:
+						ipv6=inst_details['ipAddresses'][1]['ip']
+						version6=int(inst_details['ipAddresses'][1]['version'])
+						if version6!=6:ipv6=''
+					except:ipv6=''
 				region=inst_details['region']
 				status=inst_details['status']
 				image='unknown'
@@ -454,7 +470,8 @@ def fetch_dedicatedCloud_cpu_ram(tenant_dict):
 	try:
 		with open('dedicatedCloud_saved_dictionary.pkl','rb') as f:
 			dedicatedCloud=pickle.load(f)
-	except:None
+	except:
+		dedicatedCloud={}
 	for t in tenant_dict:
 		client=tenant_dict[t]
 		r1=client.get('/dedicatedCloud/'+str(t))
@@ -493,7 +510,7 @@ def fetch_dedicatedCloud_cpu_ram(tenant_dict):
 							break
 						except:
 							continue
-	with open('dedicatedCloud_saved_dictionary.pkl','wb') as f:
+	with open('recette_dedicatedCloud_saved_dictionary.pkl','wb') as f:
 		pickle.dump(dedicatedCloud,f)
 	return dedicatedCloud
 
@@ -511,7 +528,7 @@ def aggregate_dedicatedCloud_cpu_ram(dedicatedCloud):
 			instance_list.append([t,dc,name,ram_moy,ram_pic,ram_max,cpu_moy,cpu_pic,cpu_max,tt2])
 	return instance_list
 
-def all_extraction():
+def all_extraction(clients):
 	# pour eviter qu'un tenant soit traité via un autre compte racine
 	# on choisi un seul client pour chaque tenant
 	tenant_dict={}
@@ -519,22 +536,50 @@ def all_extraction():
 	tenant_dict_VPS={}
 	tenant_id_dict={}
 	nich_set=set()
-	#Connexion à l'API OVH pour chaque compte client
-	for file in os.listdir('Conf_token'):
-		c=ovh.Client(config_file=config['API_Token']['Folder_path']+str(file))
-		# Récupération de la liste des tenants du compte
-		tenant_list=sorted(list(set(c.get('/cloud/project'))))
-		for t in tenant_list:tenant_dict[t]=c
-		tenant_list=sorted(list(set(c.get('/dedicatedCloud'))))
-		for t in tenant_list:tenant_dict_HPC[t]=c
-		tenant_list=sorted(list(set(c.get('/vps'))))
-		for t in tenant_list:tenant_dict_VPS[t]=c
-		#Récupération de la liste des services déployés sur
-		tenant_id_list=c.get('/services') 
-		for t in tenant_id_list:tenant_id_dict[t]=c
+	#Connexion à l'API OVH pour chaque compte client ***
+	for c in clients:
+		file=client_to_file[c]
+		try:
+			# Récupération de la liste des tenants du compte
+			tenant_list=sorted(list(set(c.get('/cloud/project'))))
+			for t in tenant_list:tenant_dict[t]=c
+		except:
+			logging.info([file,"n'a pas accès au point final ","/cloud/project"])
+			s=traceback.format_exc()
+			logging.info(["raise",s])
 
-		nich=c.get('/me')['nichandle']
-		nich_set.add(nich)
+		try:
+			tenant_list=sorted(list(set(c.get('/dedicatedCloud'))))
+			for t in tenant_list:tenant_dict_HPC[t]=c
+		except:
+			logging.info([file,"n'a pas accès au point final ","/dedicatedCloud"])
+			s=traceback.format_exc()
+			logging.info(["raise",s])
+
+		try:
+			tenant_list=sorted(list(set(c.get('/vps'))))
+			for t in tenant_list:tenant_dict_VPS[t]=c
+		except:
+			logging.info([file,"n'a pas accès au point final ","/vps"])
+			s=traceback.format_exc()
+			logging.info(["raise",s])
+
+		try:
+			#Récupération de la liste des services déployés sur
+			tenant_id_list=c.get('/services') 
+			for t in tenant_id_list:tenant_id_dict[t]=c
+		except:
+			logging.info([file,"n'a pas accès au point final ","/services"])
+			s=traceback.format_exc()
+			logging.info(["raise",s])
+
+		try:
+			nich=c.get('/me')['nichandle']
+			nich_set.add(nich)
+		except:
+			logging.info([file,"n'a pas accès au point final ","/me"])
+			s=traceback.format_exc()
+			logging.info(["raise",s])
 
 	tenant_instance_list0=fetch_public_cloud_instance_current(tenant_dict)
 	csv_write(csv_output0,header0,tenant_instance_list0)
@@ -563,28 +608,21 @@ def all_extraction():
 	missing_list=detect_missing_token(nich_set,tenant_list)
 	csv_write(csv_output8,header8,missing_list)
 
-	Calcul_inducteurs.compute()
-	Info_users.compute()
+	Calcul_inducteurs.compute(logging)
+	Info_users.compute(clients,logging,client_to_file)
 
-def extract_private_cloud_resources_usage():
+def extract_private_cloud_resources_usage(clients):
 	# pour eviter qu'un tenant soit traité via un autre compte racine
 	# on choisi un seul client pour chaque tenant
 	tenant_dict_HPC={}
 	#Connexion à l'API OVH pour chaque compte client
-	for file in os.listdir('Conf_token'):
-		c=ovh.Client(config_file=config['API_Token']['Folder_path']+str(file))
-
-		# Obtenir les informations sur le token
-		# token_info = c.get('/auth/currentCredential')
-		# # Afficher la date d'expiration
-		# logging.info(["La date d'expiration du token est :",file,token_info])
-		# # logging.info(["La date d'expiration du token est :",file,token_info['expiration']])
-
+	for c in clients:
+		file=client_to_file[c]
 		try:
 			tenant_list=sorted(list(set(c.get('/dedicatedCloud'))))
 			for t in tenant_list:tenant_dict_HPC[t]=c
 		except:
-			logging.info(["problem token",file])
+			logging.info([file,"n'a pas accès au point final ","/dedicatedCloud"])
 			s=traceback.format_exc()
 			logging.info(["raise",s])
 
@@ -593,6 +631,10 @@ def extract_private_cloud_resources_usage():
 	csv_write(csv_output9,header9,global_history9)
 
 def read_sharepoint():
+	# vider le dossier des tokens
+	files = glob.glob('./Conf_token/*')
+	for f in files:os.remove(f)
+
 	context_auth = AuthenticationContext(url=sharepoint_site_url)
 	context_auth.acquire_token_for_app(client_id=sharepoint_client_id,client_secret=sharepoint_client_secret)
 	ctx = ClientContext(sharepoint_site_url, context_auth)
@@ -618,11 +660,16 @@ def read_cmdb(path_to_xls):
 	xls = pd.ExcelFile(path_to_xls)
 	df1 = pd.read_excel(xls, '3. Appli-Tenant')
 	df2 = pd.read_excel(xls, '6. Mapping VM')
+	df3 = pd.read_excel(xls, '7. Emails')
 	df1['ratio'] = df1['TVA'] * df1['Réduction Marché'] * df1['Coût support OVH']	
 	Tenant_to_ratio = dict(zip(df1['Tenant ID'],df1['ratio']))
 	logging.info(["Tenant_to_ratio",Tenant_to_ratio])
 	df2.to_csv("instances_rules.csv",sep=',',encoding='utf-8',index=False)
-	return Tenant_to_ratio
+	logging.info(["ecriture de instances_rules.csv"])
+	email_list = list(df3['email'])
+	if debug: email_list = ['mohamed.dahmoune@mmh-ingenierie.fr']
+	logging.info(["email_list",email_list])
+	return Tenant_to_ratio,email_list
 
 def send_sharepoint(tt1):
 	context_auth = AuthenticationContext(url=sharepoint_site_url)
@@ -674,46 +721,69 @@ def get_next_hour():
 		tt15=ts_to_local_time_str(local_time_str_to_ts(tt1[:14]+"15"+tt1[16:-2]+"00"))
 	return(tt15)
 
-def send_email(tt,s):
-	# Voici l’email destinataire des mails d’alerte : Exemple@exemple.com
-	subject="rapport d'extraction "+str(tt)
-	text="python email: "+str(tt)+'\n'
-	for t in unknown_tenant_ratio:
-		text+="Le tenant "+str(t)+" n'est pas associé à des ratios dans la CMDB"+'\n'
-	text+=s
+def send_email(email_list,tt,s):
+	subject="Finops "+str(tt)
+	text="python email: "+str(tt)+'\n'+"GED: "+sharepoint_relative_url+'\n'+s
 	message = 'Subject: {}\n\n{}'.format(subject,text)
-	mailserver = smtplib.SMTP('SMTP_server_ip',SMTP_server_port)
+	mailserver = smtplib.SMTP(SMTP_server_ip,SMTP_server_port)
 	mailserver.ehlo()
 	mailserver.starttls()
-	mailserver.login('email_client_id', 'email_client_secret')
+	mailserver.login(email_client_id,email_client_secret)
 	#Adding a newline before the body text fixes the missing message body
-	mailserver.sendmail('email_client_id','adress',message.encode('cpxxx'))
+	for adress in email_list:
+		mailserver.sendmail(email_client_id,adress,message.encode('cp1252'))
 	mailserver.quit()
-
-# try:
-# 	with open('dedicatedCloud_saved_dictionary.pkl','rb') as f:
-# 		dedicatedCloud=pickle.load(f)
-# except:None
-
-# for k in dedicatedCloud:
-# 	print(k,dedicatedCloud[k])
-# sys.exit(1)
-
-# # YYYY-MM-DD-HH-mm-ss
-# next_tt="2024-03-26-16-15-00"
-# HH=int(next_tt[11:13])
-# MM=int(next_tt[5:7])
-# next_month_j_0=ts_to_local_time_str(local_time_str_to_ts(next_tt)+3600)[5:7]
-# next_month_j_1=ts_to_local_time_str(local_time_str_to_ts(next_tt)+3600+3600*24)[5:7]
-# print(next_tt,HH,MM!=next_month_j_0,MM!=next_month_j_1)
-# sys.exit(1)
 
 def closelog(handlers):
 	for handler in handlers:
 		handler.close()
 
+def auth():
+	l=[]
+	clients=[]
+	for file in os.listdir('Conf_token'):
+		try:
+			c=ovh.Client(config_file=config['API_Token']['Folder_path']+str(file))
+			# Obtenir les informations sur le token
+			token_info = c.get('/auth/currentCredential')
+			d0=token_info["creation"]
+			D0=d0
+			if d0!=None:d0=d0[:10]
+			d1=token_info["expiration"]
+			D1=d1
+			if d1!=None:
+				d1=d1[:10]
+				d=arrow.get(d1)-arrow.now()
+				if d.days<=4:
+					msg="Le token "+file+" expire le "+str(D1)+"."
+					logging.info([msg])
+					alerts.add(msg)
+			logging.info([file,d0,d1])
+			l.append([file,d0,d1])
+			clients.append(c)
+			client_to_file[c]=file
+		except:
+			s=traceback.format_exc()
+			msg="Le token "+file+" a probablement expiré."
+			l.append([file,"probablement expiré","probablement expiré"])
+			logging.info([file,"probablement expiré","probablement expiré"])
+			logging.info(["raise",s,msg])
+			alerts.add(msg)
+	logging.info(["Clients",[client_to_file[c] for c in client_to_file]])		
+	csv_write(csv_output11,header11,l)
+	return clients
+
+def create_local_folder(f):
+	if not os.path.exists(f):
+		os.makedirs(f) 
+
 begin=True
+ts_last_alert=0
 while True:
+	unknown_tenant_ratio=set()
+	create_local_folder("Conf_token")
+	create_local_folder("CSV_output")
+	create_local_folder("log")
 	ts=str(int((time.time()*100)))
 	next_tt=get_next_hour()
 	reload(logging)
@@ -724,24 +794,56 @@ while True:
 	try:
 		HH=int(next_tt[11:13])
 		MM=int(next_tt[5:7])
-		next_month_j_0=ts_to_local_time_str(local_time_str_to_ts(next_tt)+3600)[5:7]
-		next_month_j_1=ts_to_local_time_str(local_time_str_to_ts(next_tt)+3600+3600*24)[5:7]
+		DD=int(next_tt[8:10])
+		next_month_j_0=int(ts_to_local_time_str(local_time_str_to_ts(next_tt)+3600)[5:7])
+		next_month_j_1=int(ts_to_local_time_str(local_time_str_to_ts(next_tt)+3600+3600*24)[5:7])
+		day0=ts_to_day_of_week(local_time_str_to_ts(next_tt))
+		day1=ts_to_day_of_week(local_time_str_to_ts(next_tt)+3600)
+		fin_de_mois         =(MM!=next_month_j_0)and(HH==23)
+		fin_de_mois_anticipe=(MM!=next_month_j_1)and(HH==23)
+		fin_de_semaine      =(day0!="Monday" and day1=="Monday")and(HH==23)
+		debut_de_mois       =(DD==1)and(HH==23)
+		logging.info(["begin",begin])
+		logging.info(["fin_de_mois",fin_de_mois])
+		logging.info(["fin_de_mois_anticipe",fin_de_mois_anticipe])
+		logging.info(["fin_de_semaine",fin_de_semaine])
+		logging.info(["debut_de_mois",debut_de_mois])
 		if not begin:
 			pause.until(local_time_str_to_ts(next_tt))
 		date_time_refresh(next_tt)
 		read_sharepoint()
-		Tenant_to_ratio=read_cmdb("./CMDB.xlsx")
-		extract_private_cloud_resources_usage()
-		# if HH==23 or begin:
-		# 	all_extraction()
-		# 	logging.info(list(unknown_tenant_ratio))
-		# 	send_sharepoint(next_tt)
-		# 	send_email(next_tt,"extraction avec succès\n")
-		begin=False
+		clients=auth()	
+		Tenant_to_ratio,email_list=read_cmdb("./CMDB.xlsx")
+		# if not debug: extract_private_cloud_resources_usage(clients)
+		extract_private_cloud_resources_usage(clients)
+		if begin or fin_de_mois or fin_de_mois_anticipe or fin_de_semaine:
+			all_extraction(clients)
+			logging.info(["unknown_tenant_ratio",list(unknown_tenant_ratio)])
+			send_sharepoint(next_tt)
+			msg="extraction avec succès\n"
+			if len(unknown_tenant_ratio)>0:
+				msg+="Attention:\n"
+			for t in unknown_tenant_ratio:
+				msg+="Le tenant "+str(t)+" n'est pas mappé dans la CMDB"+'\n'
+			logging.info([msg])
+			send_email(email_list,next_tt,msg)
+			begin=False
+		alerts = set(list(dedupe(list(alerts), threshold=90, scorer=fuzz.ratio)))
+		if len(alerts)>0 and (time.time()-ts_last_alert)/(3600)>24:
+			for s in alerts:
+				send_email(email_list,next_tt,s)
+			alerts=set()
+			ts_last_alert=time.time()
 		closelog(handlers)
 	except:
 		s=traceback.format_exc()
 		logging.info(["raise",s])
-		send_email(next_tt,s)
+		alerts.add(s)
+		alerts = set(list(dedupe(list(alerts), threshold=90, scorer=fuzz.ratio)))
+		if len(alerts)>0 and (time.time()-ts_last_alert)/(3600)>24:
+			for s in alerts:
+				send_email(email_list,next_tt,s)
+			alerts=set()
+			ts_last_alert=time.time()
 		closelog(handlers)
-		pause.minutes(15)
+		pause.minutes(1)
