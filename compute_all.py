@@ -384,6 +384,25 @@ def fetch_GW_info(client,tid):
 			logging.info(["exception for fetch_LB_info",tid,rg])
 	return GW_list
 
+#Ajoute un enregistrement à la liste si l'id du service n'existe pas et enrichit la type de service sinon
+def check_for_new_tenant(new_tenant, tenant_list):
+	name_i=0
+	uniqueID_i=1
+	productType_i=2
+	found=0
+	for tenant in tenant_list:
+		if tenant[uniqueID_i] == new_tenant[uniqueID_i]:
+			if new_tenant[name_i] != new_tenant[uniqueID_i]:
+				tenant[name_i]=new_tenant[name_i]
+				tenant[productType_i]=new_tenant[productType_i]+'|'+tenant[productType_i]
+			else:
+				tenant[productType_i]=tenant[productType_i]+'|'+new_tenant[productType_i]
+			found=1
+			break
+	if not found:
+		tenant_list.append(new_tenant)
+	return tenant_list
+
 #Flag tous les tenant ayant une certification HDS
 def check_for_hds(tenant_list):
 	name_i=0
@@ -445,7 +464,8 @@ def fetch_tenant_info(tenant_id_dict):
 			if productType=='Public Cloud Project':
 				LB_list_global.extend(fetch_LB_info(client,uniqueID))
 				GW_list_global.extend(fetch_GW_info(client,uniqueID))
-			tenant_list.append([name,uniqueID,productType,hds,snc,contact_admin,contact_tech,contact_bill])
+			new_tenant=[name,uniqueID,productType,hds,snc,contact_admin,contact_tech,contact_bill]
+			tenant_list=check_for_new_tenant(new_tenant,tenant_list)
 	tenant_list=check_for_hds(tenant_list)
 	tenant_list=check_for_snc(tenant_list)
 	return tenant_list, GW_list_global+LB_list_global
